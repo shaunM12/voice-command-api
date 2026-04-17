@@ -34,6 +34,8 @@ The frontend uses a single public entry point:
 
 - `POST /transcribe`
 
+The frontend does **not** resolve intents with the Web Speech API. It only captures audio (up to 20 seconds), sends the file to `POST /transcribe`, and shows the backend transcription to make debugging easier.
+
 That endpoint must:
 
 1. receive recorded audio from the frontend
@@ -155,7 +157,7 @@ Implement `POST /instruction` so it:
 
 - receives `{ "transcription": "..." }`
 - calls the Groq API
-- returns only a JSON object with this shape:
+- receives plain text and returns **only** a routing JSON object with this shape (no task execution):
 
 ```json
 {
@@ -172,8 +174,8 @@ Do not hardcode intent matching with manual rules such as `if "add" in text`.
 Implement `POST /transcribe` so it:
 
 - accepts `multipart/form-data` with an audio file
-- transcribes the audio
-- calls the same instruction-routing logic used by `/instruction`
+- converts audio to text
+- reuses the same instruction-routing logic used by `/instruction`
 - executes the selected task action
 - returns:
 
@@ -202,6 +204,15 @@ Implement `POST /transcribe` so it:
 If the transcription shown in the frontend is already wrong, the problem is in the audio capture or speech-to-text step.
 
 If the transcription is correct but the action is wrong, the problem is in `/instruction`.
+
+---
+
+## What we will evaluate
+
+- [ ] `POST /transcribe` accepts audio, transcribes it, and reuses `/instruction` routing logic.
+- [ ] `POST /instruction` receives plain text and returns only routing JSON (no action execution).
+- [ ] `GET /tasks`, `POST /tasks`, `PUT /tasks/{task_id}`, `PATCH /tasks/{task_id}`, and `DELETE /tasks/{task_id}` work correctly with in-memory state.
+- [ ] The frontend displays the transcription returned by the backend to help distinguish STT errors from routing errors.
 
 ---
 
