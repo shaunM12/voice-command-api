@@ -44,7 +44,7 @@ Ese endpoint debe:
 
 Tu backend tambien debe exponer:
 
-- `POST /instruction` para convertir una transcripcion en un JSON de routing
+- `POST /instruction`
 - `GET /tasks`
 - `POST /tasks`
 - `PUT /tasks/{task_id}`
@@ -53,7 +53,7 @@ Tu backend tambien debe exponer:
 
 Importante:
 
-- Usa **solo almacenamiento en memoria**. No base de datos, no archivos.
+- Usa **solo almacenamiento en memoria**. No base de datos ni archivos.
 - El frontend ya viene dado y no deberias modificarlo como parte del ejercicio.
 - El backend incluido en este repositorio es solo un template. Tu debes completar la logica faltante.
 
@@ -63,25 +63,39 @@ Importante:
 
 ```text
 voice-command-api/
-├── frontend/                # Frontend ya listo
-│   ├── public/
-│   └── src/
-├── src/
-│   └── app/
-│       ├── api/routes/      # /transcribe, /instruction, /tasks
-│       ├── core/            # Configuracion
-│       ├── schemas/         # Contratos de requests/responses
-│       ├── services/        # Aqui va tu implementacion
-│       └── utils/
-├── Pipfile
-└── README.es.md
+|-- .devcontainer/           # Configuracion para Codespaces
+|-- frontend/                # Frontend ya listo
+|   |-- public/
+|   `-- src/
+|-- src/
+|   `-- app/
+|       |-- api/routes/      # /transcribe, /instruction, /tasks
+|       |-- core/            # Configuracion
+|       |-- schemas/         # Contratos de request y response
+|       |-- services/        # Aqui va tu implementacion
+|       `-- utils/
+|-- Pipfile
+|-- README.md
+`-- README.es.md
 ```
 
 ---
 
 ## Como empezar
 
-Haz fork o usa este repositorio como template y luego clonaló:
+Puedes abrir este proyecto en [GitHub Codespaces](https://codespaces.new/4GeeksAcademy/voice-command-api) o clonarlo localmente.
+
+Si usas Codespaces, el repositorio ya incluye un `.devcontainer` preparado para Python, Node, FastAPI y Vite.
+
+### Opcion A: GitHub Codespaces
+
+1. Abre el repositorio en Codespaces.
+2. Espera a que el dev container termine de instalar dependencias.
+3. Crea `.env` a partir de `.env.example`.
+4. Crea `frontend/.env` a partir de `frontend/.env.example`.
+5. Ejecuta el backend y el frontend desde la terminal.
+
+### Opcion B: Configuracion local
 
 ```bash
 git clone https://github.com/4GeeksAcademy/voice-command-api
@@ -180,19 +194,6 @@ Implementa `POST /transcribe` para que:
   }
 }
 ```
-
----
-
-## Que vamos a evaluar
-
-- [ ] `POST /transcribe` recibe audio y devuelve JSON valido
-- [ ] `POST /instruction` devuelve un payload de routing valido
-- [ ] Los cinco endpoints de tareas estan bien implementados
-- [ ] La lista de tareas se maneja en memoria
-- [ ] CORS esta configurado correctamente
-- [ ] El frontend puede comunicarse con el backend sin errores
-- [ ] La transcripcion devuelta se muestra en la app
-- [ ] `.env` esta ignorado y los secretos no se suben al repositorio
 
 ---
 
