@@ -9,10 +9,8 @@ interface InstructionResponse {
   params: Record<string, unknown>
 }
 
-interface TranscribeFlowResponse {
+interface TranscriptionResponse {
   transcription: string
-  instruction: InstructionResponse
-  result: unknown
 }
 
 interface ChatMessage {
@@ -36,7 +34,9 @@ interface AppState {
   chat: ChatMessage[]
 }
 
-const API_BASE_URL = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL ?? '')
+const API_BASE_URL = import.meta.env.DEV
+  ? '/api'
+  : normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL ?? '')
 const STORAGE_KEY_TRANSCRIBE_LANG = 'voice-command-api.transcribe-language'
 const REQUEST_TIMEOUT_MS = 45000
 const MAX_RECORDING_MS = 20000
@@ -251,9 +251,14 @@ async function startRecording(): Promise<void> {
         state.microphoneState = 'Uploading audio for transcription...'
         render()
 
-        const payload = await postAudioForFlow(audioBlob)
+        const payload = await postAudioForTranscription(audioBlob)
         state.transcription = payload.transcription
-        appendUserAndAssistantMessages(payload.transcription, payload.instruction, payload.result)
+        const flowResult = await executeInstructionFlow(payload.transcription)
+        appendUserAndAssistantMessages(
+          flowResult.transcription,
+          flowResult.instruction,
+          flowResult.result,
+        )
         state.microphoneState = 'Command completed successfully.'
       } catch (error) {
         registerFailure(toErrorMessage(error))
@@ -332,9 +337,9 @@ async function submitManualTranscription(rawValue: string): Promise<void> {
     state.microphoneState = 'Sending manual transcription to the backend...'
     render()
 
-    const payload = await postManualTranscription(transcription)
-    state.transcription = payload.transcription
-    appendUserAndAssistantMessages(payload.transcription, payload.instruction, payload.result)
+    const flowResult = await executeInstructionFlow(transcription)
+    state.transcription = flowResult.transcription
+    appendUserAndAssistantMessages(flowResult.transcription, flowResult.instruction, flowResult.result)
     state.microphoneState = 'Manual command completed successfully.'
   } catch (error) {
     registerFailure(toErrorMessage(error))
@@ -365,7 +370,7 @@ function selectedTranscriptionLanguage(): string {
   return transcribeLangSelect.value.trim().toLowerCase()
 }
 
-async function postAudioForFlow(audioBlob: Blob): Promise<TranscribeFlowResponse> {
+async function postAudioForTranscription(audioBlob: Blob): Promise<TranscriptionResponse> {
   const formData = new FormData()
   formData.append('file', audioBlob, inferAudioFilename(audioBlob.type))
   const lang = selectedTranscriptionLanguage()
@@ -386,15 +391,27 @@ async function postAudioForFlow(audioBlob: Blob): Promise<TranscribeFlowResponse
   const data = await safeReadJson(response)
 
   if (!response.ok) {
-    throw new Error(`Voice flow failed (${response.status}): ${stringifyData(data)}`)
+    throw new Error(`Audio transcription failed (${response.status}): ${stringifyData(data)}`)
   }
 
-  return validateFlowResponse(data)
+  return validateTranscriptionResponse(data)
 }
 
-async function postManualTranscription(transcription: string): Promise<TranscribeFlowResponse> {
+async function executeInstructionFlow(
+  transcription: string,
+): Promise<{ transcription: string; instruction: InstructionResponse; result: unknown }> {
+  const instruction = await postInstruction(transcription)
+  const result = await executeTaskInstruction(instruction)
+  return {
+    transcription,
+    instruction,
+    result,
+  }
+}
+
+async function postInstruction(transcription: string): Promise<InstructionResponse> {
   const response = await fetchWithTimeout(
-    `${API_BASE_URL}/transcribe`,
+    `${API_BASE_URL}/instruction`,
     {
       method: 'POST',
       headers: {
@@ -403,34 +420,68 @@ async function postManualTranscription(transcription: string): Promise<Transcrib
       body: JSON.stringify({ transcription }),
     },
     REQUEST_TIMEOUT_MS,
-    'Manual transcription took too long. Check the backend server and Groq integration.',
+    'Instruction routing took too long. Check the backend server and Groq integration.',
   )
 
   const data = await safeReadJson(response)
 
   if (!response.ok) {
-    throw new Error(`Manual flow failed (${response.status}): ${stringifyData(data)}`)
+    throw new Error(`Instruction routing failed (${response.status}): ${stringifyData(data)}`)
   }
 
-  return validateFlowResponse(data)
+  return validateInstructionResponse(data)
 }
 
-function validateFlowResponse(data: unknown): TranscribeFlowResponse {
+async function executeTaskInstruction(instruction: InstructionResponse): Promise<unknown> {
+  const endpoint = normalizeInstructionEndpoint(instruction.endpoint)
+  const method = instruction.method.toUpperCase() as SupportedMethod
+  const url = `${API_BASE_URL}${endpoint}`
+
+  const init: RequestInit = { method }
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+    init.headers = {
+      'Content-Type': 'application/json',
+    }
+    init.body = JSON.stringify(instruction.params ?? {})
+  }
+
+  const response = await fetchWithTimeout(
+    url,
+    init,
+    REQUEST_TIMEOUT_MS,
+    'Task API request timed out. Check the backend server.',
+  )
+
+  const data = await safeReadJson(response)
+  if (!response.ok) {
+    throw new Error(`Task API failed (${response.status}): ${stringifyData(data)}`)
+  }
+
+  return data
+}
+
+function validateTranscriptionResponse(data: unknown): TranscriptionResponse {
   if (!data || typeof data !== 'object') {
     throw new Error('The /transcribe endpoint did not return a valid JSON object.')
   }
 
-  const candidate = data as Partial<TranscribeFlowResponse>
+  const candidate = data as Partial<TranscriptionResponse>
 
   if (typeof candidate.transcription !== 'string' || !candidate.transcription.trim()) {
     throw new Error('The /transcribe response is missing a valid transcription.')
   }
 
-  if (!candidate.instruction || typeof candidate.instruction !== 'object') {
-    throw new Error('The /transcribe response is missing the routed instruction.')
+  return {
+    transcription: candidate.transcription.trim(),
+  }
+}
+
+function validateInstructionResponse(data: unknown): InstructionResponse {
+  if (!data || typeof data !== 'object') {
+    throw new Error('The /instruction endpoint did not return a valid JSON object.')
   }
 
-  const instruction = candidate.instruction as Partial<InstructionResponse>
+  const instruction = data as Partial<InstructionResponse>
   if (
     typeof instruction.endpoint !== 'string' ||
     typeof instruction.method !== 'string' ||
@@ -438,23 +489,28 @@ function validateFlowResponse(data: unknown): TranscribeFlowResponse {
     typeof instruction.params !== 'object' ||
     Array.isArray(instruction.params)
   ) {
-    throw new Error('The /transcribe response returned an invalid instruction payload.')
+    throw new Error('The /instruction response returned an invalid instruction payload.')
   }
 
   return {
-    transcription: candidate.transcription.trim(),
-    instruction: {
-      endpoint: instruction.endpoint,
-      method: instruction.method.toUpperCase() as SupportedMethod,
-      params: instruction.params,
-    },
-    result: candidate.result,
+    endpoint: instruction.endpoint,
+    method: instruction.method.toUpperCase() as SupportedMethod,
+    params: instruction.params,
   }
+}
+
+function normalizeInstructionEndpoint(endpoint: string): string {
+  const normalized = endpoint.trim()
+  if (!normalized.startsWith('/tasks')) {
+    throw new Error(`Unsupported instruction endpoint: ${endpoint}`)
+  }
+
+  return normalized
 }
 
 function appendUserAndAssistantMessages(
   transcription: string,
-  _instruction: InstructionResponse,
+  instruction: InstructionResponse,
   result: unknown,
 ): void {
   appendMessage({
@@ -466,7 +522,8 @@ function appendUserAndAssistantMessages(
   appendMessage({
     role: 'assistant',
     heading: 'API response',
-    body: 'The backend transcribed the audio, resolved the instruction, and executed the task action.',
+    body: 'The command was routed through /instruction and then executed against the task API.',
+    instruction,
     response: result,
   })
 }
@@ -524,7 +581,21 @@ function normalizeBaseUrl(value: string): string {
     throw new Error('Missing VITE_API_BASE_URL. Add it to frontend/.env.')
   }
 
-  return trimmed.replace(/\/+$/, '')
+  const normalized = trimmed.replace(/\/+$/, '')
+  const host = window.location.hostname
+  const isGithubPreviewHost = host.endsWith('.app.github.dev')
+  const isLocalApi = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(normalized)
+
+  // In Codespaces/GitHub preview, localhost from the browser is not the container API.
+  // Translate to the forwarded backend host (same slug, port 8000).
+  if (isGithubPreviewHost && isLocalApi) {
+    const forwardedHost = host.replace(/-\d+\.app\.github\.dev$/, '-8000.app.github.dev')
+    if (forwardedHost !== host) {
+      return `https://${forwardedHost}`
+    }
+  }
+
+  return normalized
 }
 
 function stringifyData(data: unknown): string {
@@ -568,6 +639,7 @@ function render(): void {
 
 function renderMessage(message: ChatMessage): string {
   const hasResponse = typeof message.response !== 'undefined'
+  const hasInstruction = Boolean(message.instruction)
 
   return `
     <article class="message-row ${message.role}">
@@ -577,6 +649,16 @@ function renderMessage(message: ChatMessage): string {
           <span>${escapeHtml(message.timestamp)}</span>
         </div>
         <p class="message-body">${escapeHtml(message.body)}</p>
+        ${
+          hasInstruction
+            ? `
+              <div class="message-block">
+                <span class="message-label">Instruction</span>
+                <pre>${escapeHtml(JSON.stringify(message.instruction, null, 2))}</pre>
+              </div>
+            `
+            : ''
+        }
         ${
           hasResponse
             ? `
